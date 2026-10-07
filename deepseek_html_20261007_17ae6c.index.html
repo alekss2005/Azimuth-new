@@ -1,0 +1,1172 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Мониторинг — Киев</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; -webkit-text-size-adjust: 100%; }
+  #map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+
+  #panel {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 1000;
+    background: rgba(0,0,0,0.92); color: #fff;
+    padding: 10px 14px 12px;
+    padding-top: calc(10px + env(safe-area-inset-top, 0));
+    font-size: 14px; line-height: 1.4;
+    max-height: 60vh; overflow: hidden;
+    border-bottom-left-radius: 16px; border-bottom-right-radius: 16px;
+    transition: transform 0.3s ease, max-height 0.3s ease;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.6);
+  }
+  #panel.collapsed {
+    transform: translateY(calc(-100% + 44px + env(safe-area-inset-top, 0)));
+    max-height: none;
+  }
+  #panel.collapsed .tabs,
+  #panel.collapsed #list { display: none; }
+
+  #panel .header { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 32px; }
+  #panel .title { font-weight: 700; color: #ffcc00; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  #panel .btn {
+    background: rgba(255,255,255,0.22); color: #fff; border: none;
+    border-radius: 8px; padding: 6px 10px; font-size: 12px;
+    cursor: pointer; flex-shrink: 0; -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+  }
+  #panel .btn:active { background: rgba(255,255,255,0.4); }
+  #panel .btn.spinning { animation: spin 1s linear infinite; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  #panel .meta { font-size: 11px; color: #bbb; margin-top: 4px; }
+  #panel .tabs { display: flex; gap: 6px; margin-top: 8px; }
+  #panel .tab {
+    flex: 1; padding: 7px 6px; border-radius: 8px; font-size: 12px;
+    background: rgba(255,255,255,0.12); color: #eee;
+    border: none; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    white-space: nowrap;
+  }
+  #panel .tab.active { background: #0088cc; color: #fff; font-weight: 600; }
+  #list { margin-top: 10px; max-height: calc(60vh - 140px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .row { display: flex; align-items: flex-start; gap: 8px; margin-top: 6px; font-size: 13px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; box-shadow: 0 0 6px currentColor; }
+  .row-text { flex: 1; word-wrap: break-word; }
+  .row-title { font-weight: 700; }
+  .row-sub { color: #eee; font-size: 12px; }
+
+  .target-icon { display: flex; flex-direction: column; align-items: center; pointer-events: auto; }
+  .target-icon svg { display: block; }
+  .target-icon .label {
+    font-size: 11px; font-weight: 800; text-align: center;
+    white-space: nowrap; margin-top: -2px;
+    color: #fff !important;
+    text-shadow: 0 0 4px #000, 0 0 4px #000, 0 0 4px #000;
+    -webkit-text-stroke: 0.5px #000;
+  }
+
+  .event-icon { display: flex; flex-direction: column; align-items: center; pointer-events: auto; }
+  .event-icon .emoji { font-size: 24px; line-height: 1; filter: drop-shadow(0 0 5px rgba(0,0,0,1)) drop-shadow(0 0 2px #fff); }
+  .event-icon.archived .emoji { opacity: 0.5; filter: grayscale(0.8); }
+  .event-icon .label {
+    font-size: 10px; font-weight: 800; text-align: center;
+    white-space: nowrap; margin-top: -2px;
+    color: #fff !important;
+    text-shadow: 0 0 4px #000, 0 0 4px #000, 0 0 4px #000;
+    -webkit-text-stroke: 0.5px #000;
+  }
+
+  .leaflet-popup-content-wrapper { border-radius: 12px; background: #1a1a1a; color: #fff; }
+  .leaflet-popup-tip { background: #1a1a1a; }
+  .leaflet-popup-close-button { color: #fff !important; }
+  .history-popup { font-size: 12px; max-height: 260px; overflow-y: auto; -webkit-overflow-scrolling: touch; color: #fff; }
+  .history-popup .entry { border-bottom: 1px solid #333; padding: 7px 0; }
+  .history-popup .entry:last-child { border-bottom: none; }
+  .history-popup .time { color: #aaa; font-size: 11px; }
+  .history-popup .route { color: #fff; font-weight: 700; margin-top: 2px; }
+  .history-popup .src { color: #ccc; font-size: 11px; margin-top: 3px; font-style: italic; }
+  .history-popup .empty { color: #999; font-style: italic; }
+
+  #status {
+    position: absolute; bottom: calc(14px + env(safe-area-inset-bottom, 0));
+    left: 14px; right: 14px; z-index: 1000;
+    background: rgba(0,0,0,0.85); color: #fff;
+    padding: 10px 14px; border-radius: 10px; font-size: 12px;
+    text-align: center; pointer-events: none; opacity: 0; transition: opacity 0.3s;
+  }
+  #status.show { opacity: 1; }
+  #status.err { background: rgba(200,30,30,0.95); }
+</style>
+</head>
+<body>
+<div id="panel" class="collapsed">
+  <div class="header">
+    <div class="title" id="panelTitle">📡 Загрузка...</div>
+    <button class="btn" id="refreshBtn" title="Обновить">🔄</button>
+    <button class="btn" id="toggleBtn">Открыть</button>
+  </div>
+  <div class="meta" id="panelMeta"></div>
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="targets">🎯 Цели</button>
+    <button class="tab" data-tab="events">💥 События</button>
+    <button class="tab" data-tab="archive">📦 Архив</button>
+  </div>
+  <div id="list"></div>
+</div>
+<div id="map"></div>
+<div id="status"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.marker-motion@0.8.2/dist/leaflet.marker-motion.js"></script>
+<script>
+'use strict';
+
+// ============ КОНФИГ ============
+const PRIORITY_CHANNELS = ['kyiv_monitor1'];
+const CHANNELS = [
+    'kyiv_monitor1','mon1tor_ua','kyiv_vanek','radar_raketaa',
+    'kievreal1','kiev_nebo','kiev_levyy_bereg','praviy_bereg_kiev',
+    'kiev_tryvoha','kyiv_nebo'
+];
+const MESSAGES_TO_SCAN = 10;
+const POLL_INTERVAL_MS = 30_000;
+const TARGET_RESET_MS  = 10 * 60 * 1000;
+const EVENT_ACTIVE_MS  = 60 * 60 * 1000;
+const EVENT_TTL_MS     = 24 * 60 * 60 * 1000;
+const MERGE_WINDOW_MS  = 5 * 60 * 1000;
+const MERGE_RADIUS_KM  = 60;
+const HISTORY_LIMIT    = 20;
+
+const CORS_PROXIES = [
+    u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+    u => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+    u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
+];
+
+// ============ КАТЕГОРИИ ЦЕЛЕЙ ============
+// Приоритет: ballistic > cruise > jet_drone > drone > unknown
+const CATEGORIES = {
+    ballistic: { label: 'Баллистика', speedKmh: 1500, color: '#c04fff',
+                 words: ['кінжал','кинжал','іскандер','искандер','циркон','балістика','баллистика','с-300','с-400','с300','с400'] },
+    cruise:    { label: 'Крылатая',   speedKmh: 400,  color: '#ff2d2d',
+                 words: ['крилата','крылатая','калібр','калибр','х-101','х-555','kh-101','kh-555'] },
+    drone:     { label: 'БПЛА',       speedKmh: 80,   color: '#ff9500',
+                 words: ['герань','шахед','shahed','geran','гербера','бпла','дрон','камикадзе','ланцет','мопед'] },
+    jet_drone: { label: 'Реакт.БПЛА', speedKmh: 350,  color: '#ff6b00',
+                 words: ['реактивн'] },
+    unknown:   { label: 'НЛО',        speedKmh: 200,  color: '#00e5ff',
+                 words: [] },
+};
+
+function detectCategory(text) {
+    if (!text) return 'unknown';
+    const lower = text.toLowerCase();
+    const hasJet   = lower.includes('реактивн');
+    const hasDrone = ['шахед','герань','гербера','shahed','geran','гербера'].some(w => lower.includes(w));
+    if (hasJet && hasDrone) return 'jet_drone';
+    if (hasJet) return 'jet_drone';
+
+    // Явный порядок приоритета: сначала самое опасное
+    for (const key of ['ballistic','cruise','drone']) {
+        for (const w of CATEGORIES[key].words) {
+            if (lower.includes(w)) return key;
+        }
+    }
+    return 'unknown';
+}
+
+// ============ КАТЕГОРИИ СОБЫТИЙ ============
+const EVENT_TYPES = {
+    impact:    { label: 'Прилёт',    emoji: '💥', color: '#ff3b30',
+                 words: ['приліт','прилет','влучання','впала','впав','упала','упав','влучив','влучила','пошкоджено','пошкоджена','пошкоджені','пошкоджений','руйнування'] },
+    fire:      { label: 'Пожар',     emoji: '🔥', color: '#ff9500',
+                 words: ['пожежа','пожежі','загоряння','займання','горить','горять','возгорання'] },
+    intercept: { label: 'Сбитие',    emoji: '🛡️', color: '#30b0c7',
+                 words: ['збито','збили','збиття','перехоплення','ппо працює','ппо спрацювала','збитий','збита','збиті'] },
+    debris:    { label: 'Обломки',   emoji: '🔻', color: '#ffcc00',
+                 words: ['уламки','осколки','залишки','фрагменти'] },
+    explosion: { label: 'Взрыв',     emoji: '💣', color: '#e01e1e',
+                 words: ['вибух','взрыв','детонація'] },
+};
+
+function detectEventTypes(text) {
+    if (!text) return [];
+    const lower = text.toLowerCase();
+    const types = [];
+    for (const [key, def] of Object.entries(EVENT_TYPES)) {
+        for (const w of def.words) {
+            if (lower.includes(w)) { types.push(key); break; }
+        }
+    }
+    return types;
+}
+
+// ============ НОРМАЛИЗАЦИЯ ============
+// Больше не подменяем і/ї/є на латиницу — сохраняем смысл украинского.
+// Латинская i (частая опечатка/копипаста) приводится к кириллической і.
+function normalizeName(s) {
+    return String(s).toLowerCase()
+        .replace(/[ʼ'`']/g, '')   // апострофы всех видов
+        .replace(/ё/g, 'е')        // русская ё
+        .replace(/ґ/g, 'г')        // украинская ґ
+        .replace(/i/g, 'і');       // латинская i → кириллическая і
+}
+
+// ============ СТЕММЕР (очень лёгкий) ============
+// Стрип коротких окончаний для укр/рус. Работает только со словами >= 6 симв.
+const STEM_ENDINGS = [
+    'ському','ського','ський','ська','ське','ські',
+    'цькому','цького','цький','цька','цьке','цькі',
+    'ами','ями','ові','еві','єві','ому','ему','єму',
+    'ах','ях','ів','їв','ом','ем','єм','ою','ею','єю',
+    'ого','его','ої','ей','ой','ий','ій','їй',
+    'а','я','о','е','у','ю','и','і','ї','є','й','ь'
+];
+const STEM_MIN_WORD = 6;
+const STEM_MIN_STEM = 4;
+const STEM_STOPWORDS = new Set([
+    'район','районі','району','районе','райони','районів',
+    'масив','масиві','масиву','місто','місті','міста',
+    'село','селі','села','селище','селищі','смт',
+    'обл','область','області','центр','центрі',
+]);
+
+function stemWord(w) {
+    if (!w || w.length < STEM_MIN_WORD) return w;
+    for (const e of STEM_ENDINGS) {
+        if (w.endsWith(e) && w.length - e.length >= STEM_MIN_STEM) {
+            return w.slice(0, w.length - e.length);
+        }
+    }
+    return w;
+}
+function stemPhrase(phrase) {
+    return phrase.split(/\s+/).map(stemWord).join(' ');
+}
+
+// ============ СЛОВАРЬ ЛОКАЦИЙ ============
+const KYIV_DISTRICTS = [
+    { name: "Подільський район",     lat: 50.4900, lng: 30.4700, aliases: ["подільському","подільський","подольском","подольский"] },
+    { name: "Голосіївський район",   lat: 50.3900, lng: 30.5100, aliases: ["голосіївському","голосіївський","голосеевском","голосеевский"] },
+    { name: "Печерський район",      lat: 50.4270, lng: 30.5400, aliases: ["печерському","печерський","печерском","печерский"] },
+    { name: "Шевченківський район",  lat: 50.4500, lng: 30.5000, aliases: ["шевченківському","шевченківський","шевченковском","шевченковский"] },
+    { name: "Оболонський район",     lat: 50.5100, lng: 30.4900, aliases: ["оболонському","оболонський","оболонском","оболонский"] },
+    { name: "Дарницький район",      lat: 50.4000, lng: 30.6400, aliases: ["дарницькому","дарницький","дарницком","дарницкий"] },
+    { name: "Деснянський район",     lat: 50.5200, lng: 30.6100, aliases: ["деснянському","деснянський","деснянском","деснянский"] },
+    { name: "Дніпровський район",    lat: 50.4600, lng: 30.6100, aliases: ["дніпровському","дніпровський","днепровском","днепровский"] },
+    { name: "Солом'янський район",   lat: 50.4250, lng: 30.4400, aliases: ["солом'янському","солом'янський","соломенском","соломенский","соломянському","солом'янка","соломянка","соломенка","солом'янці"] },
+    { name: "Святошинський район",   lat: 50.4550, lng: 30.4000, aliases: ["святошинському","святошинський","святошинском","святошинский","святошині","святошино"] },
+];
+
+const KYIV_LOCATIONS = [
+    { name:"Поділ", lat:50.4650, lng:30.5150 },
+    { name:"Виноградар", lat:50.5100, lng:30.4350, aliases:["виноградарі","виноградаре","виноградарю"] },
+    { name:"Куренівка", lat:50.4850, lng:30.4850, aliases:["куренівці","куренівку","куренівки","куреньовка"] },
+    { name:"Почайна", lat:50.4880, lng:30.5000, aliases:["почайні","почайну"] },
+    { name:"Оболонь", lat:50.5100, lng:30.5000, aliases:["оболоні","оболонью","оболоння"] },
+    { name:"Мінський масив", lat:50.5250, lng:30.4700, aliases:["мінському","минском","мінський"] },
+    { name:"Пуща-Водиця", lat:50.5900, lng:30.3350, aliases:["пущі-водиці","пуща-водица"] },
+    { name:"Пріорка", lat:50.5050, lng:30.4900, aliases:["пріорці","приорке"] },
+    { name:"Голосіїв", lat:50.3960, lng:30.5100, aliases:["голосієво","голосеево","голосієві"] },
+    { name:"Теремки", lat:50.3700, lng:30.4580, aliases:["теремках","теремки-1","теремки-2","теремків"] },
+    { name:"Феофанія", lat:50.3490, lng:30.4780, aliases:["феофанії"] },
+    { name:"Пирогів", lat:50.3500, lng:30.5350, aliases:["пирогові","пирогово"] },
+    { name:"Корчувате", lat:50.3540, lng:30.5480, aliases:["корчуватому"] },
+    { name:"Мишоловка", lat:50.3690, lng:30.5480, aliases:["мишоловці"] },
+    { name:"Деміївка", lat:50.4060, lng:30.5200, aliases:["деміївці","демиевке"] },
+    { name:"Голосіївський масив", lat:50.3930, lng:30.5050 },
+    { name:"Печерськ", lat:50.4250, lng:30.5450, aliases:["печерську","печерске","печерська","печерські"] },
+    { name:"Липки", lat:50.4380, lng:30.5320, aliases:["липках"] },
+    { name:"Звіринець", lat:50.4210, lng:30.5650, aliases:["зверинец","звіринці","зверинце"] },
+    { name:"Теличка", lat:50.4050, lng:30.5700, aliases:["теличці"] },
+    { name:"Палац Україна", lat:50.4270, lng:30.5200, aliases:["палацу україна","палац україна","палац украина"] },
+    { name:"Саперне поле", lat:50.4170, lng:30.5550, aliases:["саперному полі","саперне поле"] },
+    { name:"Центр", lat:50.4470, lng:30.5230, aliases:["центрі","центре","центру"] },
+    { name:"Лук'янівка", lat:50.4620, lng:30.4800, aliases:["лук'янівці","лукьяновке","лукьянівка","лукʼянівка","лукʼянівці","лук'янівка","лук'янівки"] },
+    { name:"Сирець", lat:50.4700, lng:30.4450, aliases:["сирці"] },
+    { name:"Нивки", lat:50.4580, lng:30.4150, aliases:["нивках","нивок"] },
+    { name:"Шулявка", lat:50.4500, lng:30.4650, aliases:["шулявці","шулявку"] },
+    { name:"Татарка", lat:50.4650, lng:30.5150, aliases:["татарці"] },
+    { name:"Кудрявець", lat:50.4600, lng:30.4950, aliases:["кудрявці","кудрявця"] },
+    { name:"Солом'янка", lat:50.4250, lng:30.4550, aliases:["солом'янці","соломянка","соломенка","соломянке","солом'янку"] },
+    { name:"Відрадний", lat:50.4350, lng:30.4350, aliases:["відрадному","отрадном","відрадний масив"] },
+    { name:"Чоколівка", lat:50.4200, lng:30.4300, aliases:["чоколівці","чоколовке"] },
+    { name:"Жуляни", lat:50.4050, lng:30.4300, aliases:["жулянах","жулян"] },
+    { name:"Аеропорт Жуляни", lat:50.4020, lng:30.4520, aliases:["аеропорт жуляни","жуляни аеропорт","аэропорт жуляны"] },
+    { name:"Караваєві Дачі", lat:50.4300, lng:30.4450, aliases:["караваєвих дачах","караваевых дачах"] },
+    { name:"Святошин", lat:50.4550, lng:30.4050, aliases:["святошині","святошино"] },
+    { name:"Академмістечко", lat:50.4650, lng:30.3550, aliases:["академмістечку","академгородке"] },
+    { name:"Біличі", lat:50.4750, lng:30.3500, aliases:["біличах"] },
+    { name:"Героїв Дніпра", lat:50.5250, lng:30.5000, aliases:["героїв дніпра","героев днепра"] },
+    { name:"Північна Оболонь", lat:50.5350, lng:30.5100 },
+    { name:"Троєщина", lat:50.5150, lng:30.6100, aliases:["троєщині","троещине","троєщини","троєщину","троещина"] },
+    { name:"Лісовий масив", lat:50.4850, lng:30.6350, aliases:["лісовому","лесном","лісовий"] },
+    { name:"Биківня", lat:50.4900, lng:30.6800, aliases:["биківні","быковне"] },
+    { name:"Вигурівщина", lat:50.5350, lng:30.6250, aliases:["вигурівщині"] },
+    { name:"Русанівка", lat:50.4400, lng:30.6000, aliases:["русанівці","русановке","русанівці","русанівку"] },
+    { name:"Березняки", lat:50.4200, lng:30.6000, aliases:["березняках"] },
+    { name:"Лівобережний масив", lat:50.4550, lng:30.5950, aliases:["лівобережному","лівобережному масиві","лівобережний","левобережном"] },
+    { name:"Воскресенка", lat:50.4950, lng:30.6000, aliases:["воскресенці","воскресенке"] },
+    { name:"Райдужний масив", lat:50.5000, lng:30.5900, aliases:["райдужному","радужном"] },
+    { name:"Гідропарк", lat:50.4500, lng:30.5750, aliases:["гідропарку","гидропарке"] },
+    { name:"Русанівські сади", lat:50.4700, lng:30.6000, aliases:["русанівських садах"] },
+    { name:"Позняки", lat:50.4100, lng:30.6350, aliases:["позняках","позняків"] },
+    { name:"Осокорки", lat:50.3950, lng:30.6250, aliases:["осокорках","осокорків"] },
+    { name:"Харківський масив", lat:50.4100, lng:30.6500, aliases:["харківському","харьковском","харківський"] },
+    { name:"Бортничі", lat:50.3550, lng:30.6700, aliases:["бортничах","бортничей"] },
+    { name:"Нова Дарниця", lat:50.4250, lng:30.6500 },
+    { name:"Рембаза", lat:50.4200, lng:30.6550, aliases:["рембазі","рембазе"] },
+    { name:"Червоний Хутір", lat:50.4050, lng:30.6750, aliases:["червоному хуторі","красном хуторе"] },
+    { name:"ДВРЗ", lat:50.4250, lng:30.6750, aliases:["дврз"] },
+    { name:"Соцмісто", lat:50.4450, lng:30.6300, aliases:["соцмісті","соцгороде"] },
+    { name:"Стара Дарниця", lat:50.4450, lng:30.6350, aliases:["старій дарниці"] },
+    { name:"Аеропорт Бориспіль", lat:50.3450, lng:30.8950, aliases:["бориспіль аеропорт","аеропорт бориспіль","бориспіль","борисполе","борисполя"] },
+    { name:"ТЕЦ-5", lat:50.3926, lng:30.5424, aliases:["тец-5","тец5"] },
+    { name:"ТЕЦ-6", lat:50.4911, lng:30.6114, aliases:["тец-6","тец6"] },
+    { name:"Столичний ринок", lat:50.5050, lng:30.4550, aliases:["ринку столичний","рынок столичный","ринок столичний","столичному ринку"] },
+];
+
+const KYIV_SUBURBS = [
+    { name:"Борщагівка",                 lat:50.4235, lng:30.3876, aliases:["борщагівці","борщаговке","борщагівку","борщаговка"] },
+    { name:"Микільська Борщагівка",      lat:50.4230, lng:30.3850, aliases:["мікільська борщагівка","никольская борщаговка","микільській борщагівці"] },
+    { name:"Михайлівська Борщагівка",    lat:50.4215, lng:30.4080, aliases:["михайлівська борщагівка","михайловская борщаговка","михайлівській борщагівці"] },
+    { name:"Софіївська Борщагівка",      lat:50.4105, lng:30.3685, aliases:["софіївська борщагівка","софиевская борщаговка","софіївській борщагівці","софіївську борщагівку"] },
+    { name:"Петропавлівська Борщагівка", lat:50.4300, lng:30.3650, aliases:["петропавлівська борщагівка","петропавловская борщаговка"] },
+    { name:"Святопетрівське",            lat:50.3950, lng:30.3250, aliases:["святопетровское","святопетрівському"] },
+    { name:"Боярка",                     lat:50.3233, lng:30.3136, aliases:["боярці","боярку","бояркою"] },
+    { name:"Чайки",                      lat:50.4361, lng:30.3372, aliases:["чайках"] },
+    { name:"Вишневе",                    lat:50.3892, lng:30.3698, aliases:["вишневому","вишневое","вишневого"] },
+    { name:"Гатне",                      lat:50.3650, lng:30.3900, aliases:["гатному"] },
+    { name:"Крюківщина",                 lat:50.3655, lng:30.3600, aliases:["крюківщині","крюковщине"] },
+    { name:"Тарасівка",                  lat:50.3700, lng:30.3300, aliases:["тарасівці"] },
+    { name:"Хотів",                      lat:50.3410, lng:30.4760, aliases:["хотові","хотіве"] },
+    { name:"Лісники",                    lat:50.3330, lng:30.5200, aliases:["лісниках","лесниках"] },
+    { name:"Козин",                      lat:50.2670, lng:30.6330, aliases:["козині","козине"] },
+    { name:"Підгірці",                   lat:50.2740, lng:30.5890, aliases:["підгірцях","подгорцах"] },
+    { name:"Українка",                   lat:50.1467, lng:30.7400, aliases:["українці","украинке"] },
+    { name:"Обухів",                     lat:50.1066, lng:30.6244, aliases:["обухові","обухове","обухова"] },
+    { name:"Ворзель",                    lat:50.5320, lng:30.1530, aliases:["ворзелі"] },
+    { name:"Немішаєве",                  lat:50.5570, lng:30.0750, aliases:["немішаєвому","немишаево"] },
+    { name:"Коцюбинське",                lat:50.4960, lng:30.3270, aliases:["коцюбинському","коцюбинское"] },
+    { name:"Ірпінь",                     lat:50.5218, lng:30.2506, aliases:["ірпені","ирпене","ірпеня","ірпеню","ірпіня","ірпіні","ирпень"] },
+    { name:"Буча",                       lat:50.5434, lng:30.2120, aliases:["бучі","буче","бучи","бучу"] },
+    { name:"Гостомель",                  lat:50.5689, lng:30.2625, aliases:["гостомелі","гостомеле","гостомеля"] },
+    { name:"Вишгород",                   lat:50.5844, lng:30.4860, aliases:["вишгороді","вышгороде"] },
+    { name:"Нові Петрівці",              lat:50.6300, lng:30.4600, aliases:["нових петрівцях","новых петровцах"] },
+    { name:"Лютеж",                      lat:50.6500, lng:30.4200, aliases:["лютежі"] },
+    { name:"Бровари",                    lat:50.5110, lng:30.7900, aliases:["броварах","броварів","броварам"] },
+    { name:"Требухів",                   lat:50.4750, lng:30.9200, aliases:["требухові","требухове"] },
+    { name:"Бориспіль",                  lat:50.3527, lng:30.9550, aliases:["борисполі","борисполе","борисполя","борисполю"] },
+    { name:"Калинівка",                  lat:50.4830, lng:30.8560, aliases:["калинівці","калиновке"] },
+    { name:"Гнідин",                     lat:50.3050, lng:30.7250, aliases:["гнідині","гнедине"] },
+    { name:"Щасливе",                    lat:50.3750, lng:30.8550, aliases:["щасливому","счастливом"] },
+    // --- крупные города/ориентиры ---
+    { name:"Київ",                       lat:50.4501, lng:30.5234, aliases:["києві","києва","києву","києвом","киев","киеве","киева","киеву","киевом","київі","київа","київу","києв","київ"] },
+    { name:"Біла Церква",                lat:49.7950, lng:30.1160, aliases:["білій церкві","белой церкви","белая церковь","білої церкви","білу церкву"] },
+    { name:"Васильків",                  lat:50.1810, lng:30.3120, aliases:["василькові","василькове","василькова","васильков","василькове"] },
+    { name:"Фастів",                     lat:50.0750, lng:29.9180, aliases:["фастові","фастове","фастова","фастов"] },
+    { name:"Переяслав",                  lat:50.0700, lng:31.4500, aliases:["переяславі","переяславе","переяславль","переяслав-хмельницкий"] },
+    { name:"Кагарлик",                   lat:49.8500, lng:30.8100, aliases:["кагарлику","кагарлике"] },
+    { name:"Миронівка",                  lat:49.6600, lng:31.0000, aliases:["миронівці","мироновке"] },
+    { name:"Славутич",                   lat:51.5200, lng:30.7300, aliases:["славутичі","славутиче"] },
+    { name:"Ржищів",                     lat:49.9600, lng:31.0500, aliases:["ржищеві","ржищеве"] },
+    { name:"Богуслав",                   lat:49.5500, lng:30.8700, aliases:["богуславі","богуславе"] },
+    { name:"Тараща",                     lat:49.5600, lng:30.4900, aliases:["таращі","тараще"] },
+    { name:"Сквира",                     lat:49.7300, lng:29.6700, aliases:["сквирі","сквире"] },
+];
+
+// ============ ПОСТРОЕНИЕ ИНДЕКСОВ ============
+const LOCATION_INDEX = {};   // точный ключ -> { lat, lng, label }
+const STEM_INDEX     = {};   // основа слова -> { lat, lng, label }
+
+function indexLocation(label, lat, lng, keys) {
+    const coords = { lat, lng, label };
+    for (const raw of keys) {
+        if (!raw) continue;
+        const nk = normalizeName(raw);
+        if (!nk) continue;
+        if (!LOCATION_INDEX[nk]) LOCATION_INDEX[nk] = coords;
+
+        // Стемминг: каждое слово в фразе отдельно
+        for (const w of nk.split(/\s+/)) {
+            if (w.length < STEM_MIN_WORD) continue;
+            if (STEM_STOPWORDS.has(w)) continue;
+            const st = stemWord(w);
+            if (st.length < STEM_MIN_STEM) continue;
+            if (!STEM_INDEX[st]) STEM_INDEX[st] = coords;
+        }
+    }
+}
+
+for (const p of KYIV_LOCATIONS)  indexLocation(p.name, p.lat, p.lng, [p.name, ...(p.aliases || [])]);
+for (const d of KYIV_DISTRICTS)  indexLocation(d.name, d.lat, d.lng, [d.name, ...(d.aliases || [])]);
+for (const p of KYIV_SUBURBS)    indexLocation(p.name, p.lat, p.lng, [p.name, ...(p.aliases || [])]);
+
+// ============ УТИЛИТЫ ============
+function escapeRegex(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function formatTime(iso) {
+    try {
+        const d = new Date(iso);
+        return String(d.getDate()).padStart(2,'0') + '.' +
+               String(d.getMonth()+1).padStart(2,'0') + ' ' +
+               String(d.getHours()).padStart(2,'0') + ':' +
+               String(d.getMinutes()).padStart(2,'0');
+    } catch (e) { return iso; }
+}
+function showStatus(text, ms = 3000, isError = false) {
+    const el = document.getElementById('status');
+    el.textContent = text;
+    el.classList.toggle('err', isError);
+    el.classList.add('show');
+    clearTimeout(showStatus._t);
+    showStatus._t = setTimeout(() => el.classList.remove('show'), ms);
+}
+function distanceKm(a, b) {
+    const R = 6371;
+    const dLat = (b.lat - a.lat) * Math.PI / 180;
+    const dLng = (b.lng - a.lng) * Math.PI / 180;
+    const la1 = a.lat * Math.PI / 180, la2 = b.lat * Math.PI / 180;
+    const x = Math.sin(dLat/2)**2 + Math.sin(dLng/2)**2 * Math.cos(la1) * Math.cos(la2);
+    return 2 * R * Math.asin(Math.sqrt(x));
+}
+function bearing(from, to) {
+    const φ1 = from.lat * Math.PI / 180, φ2 = to.lat * Math.PI / 180;
+    const Δλ = (to.lng - from.lng) * Math.PI / 180;
+    const y = Math.sin(Δλ) * Math.cos(φ2);
+    const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+// ============ ПОИСК ЛОКАЦИЙ (двухпроходный) ============
+// Проход 1: точное совпадение ключа с границами.
+// Проход 2: совпадение по основе слова (стемминг).
+function findPlaces(text) {
+    if (!text) return [];
+    const norm = normalizeName(text);
+
+    const found = [];
+    const usedLabels = new Set();
+    const positions = new Map();  // label -> минимальная позиция
+
+    // --- Проход 1: точный ---
+    const exactKeys = Object.keys(LOCATION_INDEX).sort((a,b) => b.length - a.length);
+    for (const key of exactKeys) {
+        const coords = LOCATION_INDEX[key];
+        if (usedLabels.has(coords.label)) continue;
+        const re = new RegExp(`(^|[^а-яіїєґa-z])${escapeRegex(key)}([^а-яіїєґa-z]|$)`, 'i');
+        if (re.test(norm)) {
+            usedLabels.add(coords.label);
+            const idx = norm.indexOf(key);
+            positions.set(coords.label, idx >= 0 ? idx : 999999);
+            found.push({ ...coords, matchType: 'exact' });
+        }
+    }
+
+    // --- Проход 2: по основе ---
+    // Заменяем каждое слово в norm на его основу (сохраняя разделители и позиции)
+    const stemmedText = norm.replace(/[а-яіїєґa-z]+/gi, w => stemWord(w));
+
+    const stemKeys = Object.keys(STEM_INDEX).sort((a,b) => b.length - a.length);
+    for (const st of stemKeys) {
+        const coords = STEM_INDEX[st];
+        if (usedLabels.has(coords.label)) continue;
+        const re = new RegExp(`(^|[^а-яіїєґa-z])${escapeRegex(st)}([^а-яіїєґa-z]|$)`, 'i');
+        if (re.test(stemmedText)) {
+            usedLabels.add(coords.label);
+            const idx = stemmedText.indexOf(st);
+            positions.set(coords.label, idx >= 0 ? idx : 999999);
+            found.push({ ...coords, matchType: 'stem' });
+        }
+    }
+
+    // Сортировка по позиции в тексте
+    found.sort((a, b) => (positions.get(a.label) || 0) - (positions.get(b.label) || 0));
+    return found;
+}
+
+// ============ ПАРСЕР ЦЕЛЕЙ ============
+// Unicode-aware извлечение ID дрона (кириллица + латиница).
+const DRONE_ID_RE = /(?<![\p{L}\p{N}])(герань|шахед|shahed|geran|гербера)[\s\-–—]*(\d{1,4})(?!\p{N})/iu;
+
+function extractDroneId(text) {
+    if (!text) return null;
+    const m = text.match(DRONE_ID_RE);
+    if (m) {
+        const base = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+        return `${base}-${m[2]}`;
+    }
+    return null;
+}
+
+// Паттерны «движения» — только реальные конструкции маршрута или глаголы движения.
+const MOVEMENT_PATTERNS = [
+    // «з X на Y», «из X в Y», «с X до Y», «от X в Y»
+    /(?:^|\s)(?:з|із|из|с|от|від)\s+[^,.!?]{2,60}?\s+(?:на|до|в|у|по|через)\s+/i,
+    // Глаголы движения + направление
+    /(?:курсом|напрямком|прямує|прямують|летить|летять|рухається|рухаються|йде|йдуть|направляється|направляються|трима[єю]ть?\s+курс|взяв\s+курс|у\s+напрямку|в\s+напрямку|рушив|рушили|вилетів|вилетіли|заходить|заходять|зайшов|зайшли|вийшов|вийшли|наближається|наближаються|просувається|просуваються)\s+(?:на|до|в|у|по)\s+/i,
+    // «Шахед на Київ», «Ракета на Бровари»
+    /(?:шахед|герань|гербера|бпла|дрон|ракет[аиуы]|крилат[аоі]|баліст[иі]к[аиу]|ціль|цілі|група|групи|цілі)\s+(?:на|до|в|у|по|через)\s+/i,
+];
+
+function hasMovement(text) {
+    if (!text) return false;
+    const norm = normalizeName(text);
+    return MOVEMENT_PATTERNS.some(re => re.test(norm));
+}
+
+function parseTarget(text) {
+    if (!text) return null;
+    const norm = normalizeName(text);
+
+    if (!hasMovement(norm)) return null;
+
+    const places = findPlaces(text);
+    if (places.length === 0) return null;
+
+    // Попытка выделить «откуда → куда»
+    let fromPoint = null, toPoint = null;
+    const mFromTo = norm.match(/(?:^|\s)(?:з|із|из|с|от|від)\s+([^,.!?]{2,40}?)\s+(?:на|до|в|у|по|через)\s+([^,.!?]{2,40})/);
+    if (mFromTo) {
+        const fromText = mFromTo[1], toText = mFromTo[2];
+        for (const p of places) {
+            const lbl = normalizeName(p.label);
+            if (!fromPoint && fromText.includes(lbl)) fromPoint = p;
+            if (!toPoint   && toText.includes(lbl))   toPoint   = p;
+        }
+    }
+
+    // Построение маршрута + уровень уверенности
+    let route = [];
+    let routeConfidence = 'low';
+
+    if (fromPoint && toPoint && fromPoint.label !== toPoint.label) {
+        route = [fromPoint, toPoint];
+        routeConfidence = 'high';
+    } else if (places.length === 1) {
+        route = [places[0]];
+        routeConfidence = 'medium';
+    } else if (places.length > 1) {
+        route = places.slice(0, 3);
+        routeConfidence = 'low';
+    } else {
+        return null;
+    }
+
+    return {
+        category: detectCategory(text),
+        explicitId: extractDroneId(text),
+        route,
+        fromPoint,
+        routeConfidence,
+        sourceText: text,
+    };
+}
+
+// ============ ПАРСЕР СОБЫТИЙ ============
+function parseEvents(text) {
+    if (!text) return [];
+    const rawParts = text
+        .split(/[▪️•●·\n;]+/)
+        .map(s => s.trim())
+        .filter(s => s.length > 3);
+    const events = [];
+    for (const part of rawParts) {
+        const types = detectEventTypes(part);
+        if (types.length === 0) continue;
+        const places = findPlaces(part);
+        if (places.length === 0) continue;
+        const place = places[0];
+        for (const type of types) {
+            events.push({ type, lat: place.lat, lng: place.lng, place: place.label, sourceText: part });
+        }
+    }
+    return events;
+}
+
+// ============ ЗАГРУЗКА ============
+async function fetchChannelHtml(channel) {
+    const target = `https://t.me/s/${channel}`;
+    let lastErr = null;
+    for (let i = 0; i < CORS_PROXIES.length; i++) {
+        try {
+            const url = CORS_PROXIES[i](target);
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 12000);
+            const r = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeout);
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const text = await r.text();
+            if (!text || text.length < 500) throw new Error('Пустой ответ');
+            if (!text.includes('tgme_widget_message')) throw new Error('Не HTML канала');
+            return text;
+        } catch (e) { lastErr = e; }
+    }
+    throw new Error('Все прокси недоступны: ' + (lastErr ? lastErr.message : '?'));
+}
+
+function parseChannelMessages(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const posts = doc.querySelectorAll('.tgme_widget_message_wrap');
+    const messages = [];
+    posts.forEach((post, i) => {
+        if (i < posts.length - MESSAGES_TO_SCAN) return;
+        const textEl = post.querySelector('.tgme_widget_message_text');
+        const timeEl = post.querySelector('.tgme_widget_message_date time');
+        const text = textEl ? textEl.innerText.trim() : '';
+        const time = timeEl ? timeEl.getAttribute('datetime') : null;
+        if (text) messages.push({ text, time });
+    });
+    return messages;
+}
+
+// ============ СОСТОЯНИЕ ============
+let state = {
+    targets: {}, events: [], lastPoll: null, lastError: null,
+    counters: {}, activeTab: 'targets',
+};
+let history = {};
+
+function loadState() {
+    try {
+        const raw = localStorage.getItem('monitor_v8');
+        if (raw) state = Object.assign(state, JSON.parse(raw));
+        if (!state.targets)  state.targets  = {};
+        if (!state.events)   state.events   = [];
+        if (!state.counters) state.counters = {};
+    } catch (e) {}
+}
+function saveState() {
+    try { localStorage.setItem('monitor_v8', JSON.stringify(state)); } catch (e) {}
+}
+function loadHistory() {
+    try {
+        const raw = localStorage.getItem('monitor_history_v8');
+        if (raw) history = JSON.parse(raw);
+    } catch (e) { history = {}; }
+}
+function saveHistory() {
+    try { localStorage.setItem('monitor_history_v8', JSON.stringify(history)); } catch (e) {}
+}
+function appendHistory(id, entry) {
+    if (!history[id]) history[id] = [];
+    history[id].push(entry);
+    if (history[id].length > HISTORY_LIMIT) history[id] = history[id].slice(-HISTORY_LIMIT);
+    saveHistory();
+}
+
+function pruneTargets() {
+    const now = Date.now();
+    let changed = false;
+    for (const [id, t] of Object.entries(state.targets)) {
+        if (now - new Date(t.timestamp).getTime() > TARGET_RESET_MS) {
+            delete state.targets[id];
+            changed = true;
+        }
+    }
+    if (changed) saveState();
+}
+function pruneEvents() {
+    const now = Date.now();
+    const before = state.events.length;
+    state.events = state.events.filter(ev => now - new Date(ev.timestamp).getTime() < EVENT_TTL_MS);
+    if (state.events.length !== before) saveState();
+}
+function isEventActive(ev) {
+    return Date.now() - new Date(ev.timestamp).getTime() < EVENT_ACTIVE_MS;
+}
+
+function findTargetToMerge(route, category, fromPoint, timestamp) {
+    const now = new Date(timestamp).getTime();
+    if (fromPoint) {
+        for (const [id, t] of Object.entries(state.targets)) {
+            if (t.category !== category) continue;
+            const last = t.route[t.route.length - 1];
+            if (distanceKm(last, fromPoint) < 1.5) return id;
+        }
+    }
+    let best = null, bestDist = Infinity;
+    for (const [id, t] of Object.entries(state.targets)) {
+        if (t.category !== category) continue;
+        if (now - new Date(t.timestamp).getTime() > MERGE_WINDOW_MS) continue;
+        const last = t.route[t.route.length - 1];
+        const d = distanceKm(last, route[0]);
+        if (d < MERGE_RADIUS_KM && d < bestDist) { best = id; bestDist = d; }
+    }
+    return best;
+}
+
+function nextId(prefix) {
+    state.counters[prefix] = (state.counters[prefix] || 0) + 1;
+    return `${prefix}-${state.counters[prefix]}`;
+}
+
+function eventKey(ev) {
+    const lat = ev.lat.toFixed(3), lng = ev.lng.toFixed(3);
+    const min = Math.floor(new Date(ev.timestamp).getTime() / 60000);
+    return `${ev.type}|${lat}|${lng}|${min}`;
+}
+function addEvent(ev, timestamp, channel) {
+    const key = eventKey({ ...ev, timestamp });
+    for (const existing of state.events) {
+        if (eventKey(existing) === key) return;
+    }
+    state.events.push({ ...ev, timestamp, channel, id: nextId('ev') });
+    saveState();
+}
+
+// ============ ОСНОВНОЙ ЦИКЛ ============
+let isPolling = false;
+async function pollAllChannels(manual = false) {
+    if (isPolling) {
+        if (manual) showStatus('Уже обновляется...');
+        return;
+    }
+    isPolling = true;
+    if (manual) showStatus('Обновление...', 2000);
+    let fetchedAny = false, lastErr = null;
+
+    const allChannels = [...PRIORITY_CHANNELS, ...CHANNELS.filter(c => !PRIORITY_CHANNELS.includes(c))];
+
+    try {
+        for (const channel of allChannels) {
+            let messages;
+            try {
+                const html = await fetchChannelHtml(channel);
+                messages = parseChannelMessages(html);
+                fetchedAny = true;
+            } catch (e) { lastErr = e.message; continue; }
+
+            for (let i = messages.length - 1; i >= 0; i--) {
+                const msg = messages[i];
+                const timestamp = msg.time || new Date().toISOString();
+
+                const target = parseTarget(msg.text);
+                if (target) {
+                    let targetId = target.explicitId;
+                    let existing = targetId ? state.targets[targetId] : null;
+                    if (!existing) {
+                        const mergedId = findTargetToMerge(target.route, target.category, target.fromPoint, timestamp);
+                        if (mergedId) { targetId = mergedId; existing = state.targets[mergedId]; }
+                    }
+                    if (!targetId) targetId = nextId(target.category);
+
+                    let newRoute;
+                    if (existing && existing.route.length > 0) {
+                        const lastOld = existing.route[existing.route.length - 1];
+                        if (distanceKm(lastOld, target.route[0]) < 1.5) {
+                            newRoute = [...existing.route, ...target.route.slice(1)];
+                        } else {
+                            newRoute = [...existing.route, ...target.route];
+                        }
+                    } else {
+                        newRoute = [...target.route];
+                    }
+
+                    const unchanged = existing
+                        && existing.timestamp === timestamp
+                        && existing.route.length === newRoute.length;
+
+                    if (!unchanged) {
+                        state.targets[targetId] = {
+                            id: targetId, category: target.category,
+                            explicitId: target.explicitId || null,
+                            route: newRoute, timestamp,
+                            routeConfidence: target.routeConfidence,
+                            sourceText: target.sourceText, channel,
+                        };
+                        appendHistory(targetId, {
+                            timestamp, category: target.category,
+                            route: newRoute, sourceText: target.sourceText, channel,
+                        });
+                    }
+                }
+
+                const events = parseEvents(msg.text);
+                for (const ev of events) addEvent(ev, timestamp, channel);
+            }
+        }
+        if (fetchedAny) {
+            state.lastPoll = new Date().toISOString();
+            state.lastError = null;
+        } else {
+            state.lastError = lastErr;
+        }
+        saveState();
+        pruneTargets();
+        pruneEvents();
+        renderAll();
+        updateMeta();
+        if (manual && fetchedAny)       showStatus('✅ Обновлено');
+        else if (manual && !fetchedAny) showStatus('⚠️ Не удалось обновить', 4000, true);
+    } catch (e) {
+        state.lastError = e.message;
+        saveState();
+        if (manual) showStatus('⚠️ ' + e.message, 4000, true);
+    } finally {
+        isPolling = false;
+    }
+}
+
+function updateMeta() {
+    const meta = document.getElementById('panelMeta');
+    if (state.lastError) {
+        meta.textContent = '⚠️ ' + state.lastError;
+        meta.style.color = '#ff8888';
+        return;
+    }
+    if (state.lastPoll) {
+        const t = new Date(state.lastPoll);
+        meta.textContent = `Обновлено: ${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+        meta.style.color = '#bbb';
+    }
+}
+
+// ============ КАРТА ============
+const map = L.map('map', { zoomControl: false, attributionControl: false }).setView([50.4501, 30.5234], 11);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+function colorFor(cat) { return (CATEGORIES[cat] || CATEGORIES.unknown).color; }
+
+function makeTargetSvg(category, color) {
+    if (category === 'drone') {
+        return `<svg width="34" height="34" viewBox="0 0 34 34"><polygon points="17,2 26,26 17,20 8,26" fill="${color}" stroke="#000" stroke-width="1.5"/></svg>`;
+    }
+    if (category === 'jet_drone') {
+        return `<svg width="34" height="34" viewBox="0 0 34 34"><polygon points="17,2 26,26 17,20 8,26" fill="${color}" stroke="#000" stroke-width="1.5"/><circle cx="17" cy="14" r="2.2" fill="#fff" stroke="#000" stroke-width="0.5"/></svg>`;
+    }
+    if (category === 'cruise') {
+        return `<svg width="34" height="34" viewBox="0 0 34 34"><polygon points="17,2 22,12 32,16 22,20 17,32 12,20 2,16 12,12" fill="${color}" stroke="#000" stroke-width="1.5"/></svg>`;
+    }
+    if (category === 'ballistic') {
+        return `<svg width="34" height="34" viewBox="0 0 34 34"><polygon points="17,2 25,22 17,18 9,22" fill="${color}" stroke="#000" stroke-width="1.5"/><rect x="15" y="22" width="4" height="8" fill="${color}"/></svg>`;
+    }
+    return `
+        <svg width="28" height="28" viewBox="0 0 28 28">
+            <ellipse cx="14" cy="16" rx="13" ry="4.8" fill="${color}" stroke="#000" stroke-width="1"/>
+            <ellipse cx="14" cy="12.5" rx="7" ry="4" fill="${color}" stroke="#000" stroke-width="1" opacity="0.9"/>
+            <circle cx="7.5" cy="16" r="1.4" fill="#fff" stroke="#000" stroke-width="0.3"/>
+            <circle cx="14" cy="17" r="1.4" fill="#fff" stroke="#000" stroke-width="0.3"/>
+            <circle cx="20.5" cy="16" r="1.4" fill="#fff" stroke="#000" stroke-width="0.3"/>
+        </svg>`;
+}
+
+function makeTargetIcon(id, category, confidence) {
+    const color = colorFor(category);
+    const cat = CATEGORIES[category] || CATEGORIES.unknown;
+    const confMark = confidence === 'low' ? ' ~' : '';
+
+    if (category === 'unknown') {
+        return L.divIcon({
+            className: 'target-icon',
+            html:
+                `<div style="position:relative;width:28px;height:38px;">` +
+                    `<div class="arrow-wrap" style="position:absolute;left:50%;top:-10px;transform:translateX(-50%) rotate(0deg);transform-origin:50% 100%;will-change:transform;">` +
+                        `<svg width="14" height="22" viewBox="0 0 14 22">` +
+                            `<polygon points="7,0 13,14 9.5,14 9.5,22 4.5,22 4.5,14 1,14" fill="${color}" stroke="#000" stroke-width="1"/>` +
+                        `</svg>` +
+                    `</div>` +
+                    `<div class="svg-wrap" style="position:absolute;left:0;bottom:0;">` +
+                        makeTargetSvg(category, color) +
+                    `</div>` +
+                `</div>` +
+                `<div class="label">${escapeHtml(id)}${confMark}</div>`,
+            iconSize: [50, 64],
+            iconAnchor: [25, 50]
+        });
+    }
+
+    return L.divIcon({
+        className: 'target-icon',
+        html:
+            `<div class="svg-wrap" style="transform: rotate(0deg); transform-origin: 50% 50%; will-change: transform;">` +
+                makeTargetSvg(category, color) +
+            `</div>` +
+            `<div class="label">${escapeHtml(id)}${confMark}<span style="font-size:9px;opacity:.9"> · ${cat.label}</span></div>`,
+        iconSize: [60, 56],
+        iconAnchor: [30, 28]
+    });
+}
+
+function makeEventIcon(type, active) {
+    const def = EVENT_TYPES[type] || EVENT_TYPES.impact;
+    return L.divIcon({
+        className: 'event-icon' + (active ? '' : ' archived'),
+        html: `<div class="emoji">${def.emoji}</div><div class="label">${def.label}</div>`,
+        iconSize: [44, 44],
+        iconAnchor: [22, 32]
+    });
+}
+
+function setIconRotation(marker, angleDeg) {
+    if (!marker || !marker.getElement) return;
+    const el = marker.getElement();
+    if (!el) return;
+    const wrap = el.querySelector('.svg-wrap');
+    if (wrap) wrap.style.transform = `rotate(${angleDeg}deg)`;
+}
+function setArrowRotation(marker, angleDeg) {
+    if (!marker || !marker.getElement) return;
+    const el = marker.getElement();
+    if (!el) return;
+    const wrap = el.querySelector('.arrow-wrap');
+    if (wrap) wrap.style.transform = `translateX(-50%) rotate(${angleDeg}deg)`;
+}
+function updateIconAngle(route, marker, category) {
+    if (!marker || !route || route.length < 2) {
+        if (category === 'unknown') setArrowRotation(marker, 0);
+        else setIconRotation(marker, 0);
+        return;
+    }
+    const from = route[route.length - 2], to = route[route.length - 1];
+    const angle = bearing(from, to);
+    if (category === 'unknown') setArrowRotation(marker, angle);
+    else setIconRotation(marker, angle);
+}
+
+const activeTargets = {};
+const activeEvents = {};
+
+function openTargetHistory(id, latlng) {
+    const items = (history[id] || []).slice().reverse();
+    let html = '<div class="history-popup">';
+    html += '<div style="font-weight:700;margin-bottom:6px">📜 ' + escapeHtml(id) + '</div>';
+    if (items.length === 0) html += '<div class="empty">История пуста</div>';
+    else {
+        for (const h of items) {
+            const cat = (CATEGORIES[h.category] || CATEGORIES.unknown).label;
+            const route = (h.route || []).map(p => escapeHtml(p.label)).join(' → ');
+            const src = h.sourceText ? escapeHtml(h.sourceText.slice(0, 140)) : '';
+            html += `<div class="entry"><div class="time">${formatTime(h.timestamp)} · ${cat}</div><div class="route">${route}</div>` +
+                    (src ? `<div class="src">«${src}»</div>` : '') + '</div>';
+        }
+    }
+    html += '</div>';
+    L.popup({ maxWidth: 320, minWidth: 260, autoPan: true }).setLatLng(latlng).setContent(html).openOn(map);
+}
+function openEventPopup(ev, latlng) {
+    const def = EVENT_TYPES[ev.type] || EVENT_TYPES.impact;
+    const html =
+        `<div class="history-popup">` +
+        `<div style="font-weight:700;margin-bottom:6px;color:${def.color}">${def.emoji} ${def.label}</div>` +
+        `<div class="time">${formatTime(ev.timestamp)} · ${escapeHtml(ev.place || '')}</div>` +
+        `<div class="src">«${escapeHtml(ev.sourceText || '')}»</div>` +
+        `</div>`;
+    L.popup({ maxWidth: 300, minWidth: 240, autoPan: true }).setLatLng(latlng).setContent(html).openOn(map);
+}
+
+function renderTarget(t) {
+    const existing = activeTargets[t.id];
+    if (existing && existing.lastTimestamp === t.timestamp && existing.lastRouteLength === t.route.length) return;
+    if (existing) {
+        if (existing.marker)   map.removeLayer(existing.marker);
+        if (existing.polyline) map.removeLayer(existing.polyline);
+        if (existing.arrow)    map.removeLayer(existing.arrow);
+        if (existing.angleTimer) clearInterval(existing.angleTimer);
+        delete activeTargets[t.id];
+    }
+    const points = t.route;
+    if (!points || points.length === 0) return;
+
+    const color = colorFor(t.category);
+    const cat = CATEGORIES[t.category] || CATEGORIES.unknown;
+    const icon = makeTargetIcon(t.id, t.category, t.routeConfidence);
+
+    const lastPoint = points[points.length - 1];
+    const lastLatLng = [lastPoint.lat, lastPoint.lng];
+
+    let marker;
+    if (points.length === 1 || t.category === 'unknown') {
+        marker = L.marker(lastLatLng, { icon, zIndexOffset: 1000 }).addTo(map);
+    } else {
+        const latlngs = points.map(p => [p.lat, p.lng]);
+        try {
+            marker = L.markerMotion(latlngs, cat.speedKmh, {
+                icon, rotation: false, autoplay: true, loop: false
+            }).addTo(map);
+        } catch (e) {
+            marker = L.marker(lastLatLng, { icon, zIndexOffset: 1000 }).addTo(map);
+        }
+    }
+    marker.on('click', () => openTargetHistory(t.id, marker.getLatLng()));
+    setTimeout(() => updateIconAngle(points, marker, t.category), 30);
+    if (marker.on) {
+        marker.on('motion.end', () => updateIconAngle(points, marker, t.category));
+    }
+    const angleTimer = setInterval(() => {
+        if (!map.hasLayer(marker)) { clearInterval(angleTimer); return; }
+        updateIconAngle(points, marker, t.category);
+    }, 400);
+
+    let polyline = null;
+    if (points.length > 1 && t.category !== 'unknown') {
+        const latlngs = points.map(p => [p.lat, p.lng]);
+        // Низкая уверенность — более прозрачный пунктир
+        polyline = L.polyline(latlngs, {
+            color: '#ff2d2d',
+            weight: 1.5,
+            dashArray: t.routeConfidence === 'low' ? '2,10' : '4,8',
+            opacity: t.routeConfidence === 'low' ? 0.55 : 0.9,
+            interactive: false,
+        }).addTo(map);
+    }
+
+    let arrowMarker = null;
+    if (points.length > 1) {
+        const prevPoint = points[points.length - 2];
+        const angle = bearing(prevPoint, lastPoint);
+        const arrowIcon = L.divIcon({
+            className: 'route-arrow',
+            html: `<div style="transform:rotate(${angle}deg);transform-origin:50% 50%;">` +
+                  `<svg width="20" height="20" viewBox="0 0 20 20">` +
+                  `<polygon points="10,0 16,16 10,12 4,16" fill="${color}" stroke="#000" stroke-width="1"/>` +
+                  `</svg></div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+        });
+        arrowMarker = L.marker(lastLatLng, { icon: arrowIcon, interactive: false, zIndexOffset: 999 }).addTo(map);
+    }
+
+    activeTargets[t.id] = {
+        marker, polyline, arrow: arrowMarker,
+        lastTimestamp: t.timestamp,
+        lastRouteLength: points.length,
+        angleTimer,
+    };
+
+    if (Object.keys(activeTargets).length === 1) {
+        try {
+            if (polyline) map.fitBounds(polyline.getBounds(), { padding: [60, 60] });
+            else map.setView(lastLatLng, 12);
+        } catch (e) {}
+    }
+}
+
+function renderEvent(ev, forceShow) {
+    const active = isEventActive(ev);
+    if (!active && !forceShow) {
+        if (activeEvents[ev.id]) { map.removeLayer(activeEvents[ev.id]); delete activeEvents[ev.id]; }
+        return;
+    }
+    if (activeEvents[ev.id]) return;
+    const icon = makeEventIcon(ev.type, active);
+    const m = L.marker([ev.lat, ev.lng], { icon, opacity: active ? 1 : 0.6, zIndexOffset: active ? 500 : 0 }).addTo(map);
+    m.on('click', () => openEventPopup(ev, m.getLatLng()));
+    activeEvents[ev.id] = m;
+}
+
+function removeStaleTargets(currentIds) {
+    for (const id of Object.keys(activeTargets)) {
+        if (!currentIds.includes(id)) {
+            const t = activeTargets[id];
+            if (t.marker)   map.removeLayer(t.marker);
+            if (t.polyline) map.removeLayer(t.polyline);
+            if (t.arrow)    map.removeLayer(t.arrow);
+            if (t.angleTimer) clearInterval(t.angleTimer);
+            delete activeTargets[id];
+        }
+    }
+}
+
+function renderAll() {
+    const targets = Object.values(state.targets);
+    removeStaleTargets(targets.map(t => t.id));
+    for (const t of targets) renderTarget(t);
+
+    const forceShowArchive = state.activeTab === 'archive';
+    const evIds = new Set();
+    for (const ev of state.events) {
+        const active = isEventActive(ev);
+        if (active || forceShowArchive) {
+            renderEvent(ev, forceShowArchive);
+            evIds.add(ev.id);
+        }
+    }
+    for (const id of Object.keys(activeEvents)) {
+        if (!evIds.has(id)) { map.removeLayer(activeEvents[id]); delete activeEvents[id]; }
+    }
+    updatePanel();
+}
+
+function updatePanel() {
+    const title = document.getElementById('panelTitle');
+    const list = document.getElementById('list');
+    const tab = state.activeTab;
+    if (tab === 'targets') {
+        const targets = Object.values(state.targets);
+        title.textContent = targets.length ? `🎯 Цели: ${targets.length}` : '🎯 Нет активных целей';
+        list.innerHTML = targets.map(t => {
+            const color = colorFor(t.category);
+            const catLabel = (CATEGORIES[t.category] || CATEGORIES.unknown).label;
+            const routeStr = (t.route || []).map(p => escapeHtml(p.label)).join(' → ');
+            const conf = t.routeConfidence === 'low' ? ' ~' : '';
+            return `<div class="row"><span class="dot" style="background:${color};color:${color}"></span>
+                <div class="row-text"><div class="row-title" style="color:${color}">${escapeHtml(t.id)}${conf} <span style="font-size:10px;opacity:.75;color:#fff">${catLabel}</span></div>
+                <div class="row-sub">${routeStr}</div></div></div>`;
+        }).join('');
+    } else if (tab === 'events') {
+        const events = state.events.filter(isEventActive);
+        title.textContent = events.length ? `💥 События: ${events.length}` : '💥 Нет активных событий';
+        list.innerHTML = events.slice().reverse().map(ev => {
+            const def = EVENT_TYPES[ev.type] || EVENT_TYPES.impact;
+            return `<div class="row"><span class="dot" style="background:${def.color};color:${def.color}"></span>
+                <div class="row-text"><div class="row-title" style="color:${def.color}">${def.emoji} ${def.label}</div>
+                <div class="row-sub">${escapeHtml(ev.place || '')} · ${formatTime(ev.timestamp)}</div></div></div>`;
+        }).join('');
+    } else {
+        const archived = state.events.filter(ev => !isEventActive(ev));
+        title.textContent = `📦 Архив: ${archived.length}`;
+        list.innerHTML = archived.slice().reverse().map(ev => {
+            const def = EVENT_TYPES[ev.type] || EVENT_TYPES.impact;
+            return `<div class="row"><span class="dot" style="background:#666"></span>
+                <div class="row-text"><div class="row-title" style="color:#ccc">${def.emoji} ${def.label}</div>
+                <div class="row-sub">${escapeHtml(ev.place || '')} · ${formatTime(ev.timestamp)}</div></div></div>`;
+        }).join('');
+    }
+}
+
+// ============ UI ============
+const panel = document.getElementById('panel');
+const toggleBtn = document.getElementById('toggleBtn');
+const refreshBtn = document.getElementById('refreshBtn');
+
+toggleBtn.addEventListener('click', () => {
+    const collapsed = panel.classList.toggle('collapsed');
+    toggleBtn.textContent = collapsed ? 'Открыть' : 'Свернуть';
+});
+
+refreshBtn.addEventListener('click', () => {
+    refreshBtn.classList.add('spinning');
+    pollAllChannels(true).finally(() => {
+        setTimeout(() => refreshBtn.classList.remove('spinning'), 600);
+    });
+});
+
+document.getElementById('tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab');
+    if (!btn) return;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    state.activeTab = btn.dataset.tab;
+    saveState();
+    renderAll();
+});
+
+// ============ СТАРТ ============
+loadState();
+loadHistory();
+renderAll();
+updateMeta();
+pollAllChannels(false);
+setInterval(() => pollAllChannels(false), POLL_INTERVAL_MS);
+setInterval(() => { pruneTargets(); pruneEvents(); renderAll(); updateMeta(); }, 60_000);
+showStatus('Загрузка данных...');
+</script>
+</body>
+</html>
